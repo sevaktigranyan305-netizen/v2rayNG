@@ -463,6 +463,12 @@ object SettingsManager {
         val profile = MmkvManager.decodeServerConfig(guid) ?: return null
         if (profile.configType != EConfigType.VLESS) return null
         if (profile.vnet != true) return null
+        // vnetIp is required: needTun / isUsingHevTun gate on this same
+        // result, and the legacy fallback in V2RayVpnService.configureVnet
+        // also kicks in when vnetIp is missing. Without this guard we
+        // end up with no tun-inbound, no hev tunnel, and a legacy-pool
+        // TUN address — i.e. a VPN that establishes but routes nothing.
+        if (profile.vnetIp.isNullOrBlank()) return null
         return profile
     }
 
