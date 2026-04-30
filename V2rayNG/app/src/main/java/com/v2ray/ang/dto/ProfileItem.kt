@@ -139,6 +139,17 @@ data class ProfileItem(
                 && this.portHopping == obj.portHopping
                 && this.portHoppingInterval == obj.portHoppingInterval
                 && this.pinnedCA256 == obj.pinnedCA256
+
+                // Two profiles to the same VLESS server but with
+                // different virtualnet configuration are functionally
+                // distinct: one establishes a classic L4 tunnel, the
+                // other an L3 tunnel with a panel-allocated IP. Without
+                // these comparisons MainViewModel.removeDuplicateServer
+                // would silently delete one of them.
+                && this.vnet == obj.vnet
+                && this.vnetSubnet == obj.vnetSubnet
+                && this.vnetIp == obj.vnetIp
+                && this.vnetDefaultRoute == obj.vnetDefaultRoute
                 )
     }
 }

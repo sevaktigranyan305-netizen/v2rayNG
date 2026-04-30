@@ -100,13 +100,33 @@ open class FmtBase {
             "0" -> false
             else -> null
         }
+        // Validate at parse time so VpnService.Builder.addAddress /
+        // addRoute downstream never sees garbage from a malicious or
+        // typo'd link. A bad value silently becomes null, which makes
+        // the runtime fall back to the legacy address pool.
         config.vnetSubnet = queryParam["vnetSubnet"]?.ifBlank { null }
+            ?.takeIf { isValidIpv4Cidr(it) }
         config.vnetIp = queryParam["vnetIp"]?.ifBlank { null }
+            ?.takeIf { Utils.isPureIpAddress(it) }
         config.vnetDefaultRoute = when (queryParam["vnetDefaultRoute"]) {
             "1" -> true
             "0" -> false
             else -> null
         }
+    }
+
+    /**
+     * Returns true when the input is an IPv4 CIDR like "10.0.0.0/24".
+     *
+     * Used to gate vnetSubnet so we never feed a malformed value to
+     * VpnService.Builder.addRoute().
+     */
+    private fun isValidIpv4Cidr(value: String): Boolean {
+        val parts = value.split('/')
+        if (parts.size != 2) return false
+        val prefix = parts[1].toIntOrNull() ?: return false
+        if (prefix !in 0..32) return false
+        return Utils.isPureIpAddress(parts[0])
     }
 
     /**

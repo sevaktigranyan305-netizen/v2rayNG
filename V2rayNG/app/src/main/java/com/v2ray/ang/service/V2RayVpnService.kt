@@ -20,6 +20,7 @@ import com.v2ray.ang.AppConfig.LOOPBACK
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.contracts.Tun2SocksControl
+import com.v2ray.ang.dto.ProfileItem
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.SettingsManager
@@ -226,19 +227,12 @@ class V2RayVpnService : VpnService(), ServiceControl {
         // .establish() returns the file descriptor, so we cannot wait
         // for xray to negotiate one with the server.
         val vnetProfile = SettingsManager.getCurrentVnetProfile()
-        if (vnetProfile?.vnetIp != null) {
-            val prefixLen = parseSubnetPrefix(vnetProfile.vnetSubnet)
-            builder.addAddress(vnetProfile.vnetIp!!, prefixLen)
-            // Always add a route for the virtualnet subnet so peer-to-peer
-            // traffic between clients on the same virtualnet works
-            // regardless of defaultRoute. defaultRoute additionally pulls
-            // everything else through the tunnel.
-            val (subnetAddr, subnetPrefix) = parseSubnetCidr(vnetProfile.vnetSubnet)
-            builder.addRoute(subnetAddr, subnetPrefix)
-            if (vnetProfile.vnetDefaultRoute != false) {
-                builder.addRoute("0.0.0.0", 0)
-            }
-        } else {
+        // configureVnet may throw IllegalArgumentException if the panel
+        // somehow handed us an invalid IP/CIDR despite parse-time
+        // validation. Fall back to the legacy address pool so the user
+        // is not stuck with a service that crashes onStartCommand.
+        val vnetActive = vnetProfile?.vnetIp != null && configureVnet(builder, vnetProfile)
+        if (!vnetActive) {
             val vpnConfig = SettingsManager.getCurrentVpnInterfaceAddressConfig()
             // Configure IPv4 settings
             builder.addAddress(vpnConfig.ipv4Client, 30)
@@ -257,7 +251,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
         // Configure IPv6 if enabled (skipped for the virtualnet path:
         // the panel only allocates an IPv4 vnetIp today and the xray
         // l3client subnet is IPv4-only).
-        if (vnetProfile?.vnetIp == null
+        if (!vnetActive
             && MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED) == true
         ) {
             val vpnConfig = SettingsManager.getCurrentVpnInterfaceAddressConfig()
@@ -372,26 +366,45 @@ class V2RayVpnService : VpnService(), ServiceControl {
     }
 
     /**
-     * Returns the prefix length for assigning the local TUN address.
+     * Programs the VpnService.Builder for a virtualnet (l3client) profile.
      *
-     * For an L3 virtualnet, every peer sits inside the same subnet
-     * (e.g. /24), so we use the subnet's prefix length so the kernel
-     * routes other-peer traffic over the TUN by default. Falls back to
-     * /32 if we cannot parse the subnet — that still works because we
-     * separately add the subnet as a route below.
+     * Returns true if all addresses/routes were applied successfully so
+     * the caller knows to skip the legacy address-pool path. Returns
+     * false (and logs) on any failure — VpnService.Builder.addAddress /
+     * addRoute throw IllegalArgumentException for malformed inputs and
+     * the rest of the service does not catch them. Falling back to the
+     * legacy pool is much friendlier than crashing onStartCommand.
+     *
+     * vnetSubnet/vnetIp are validated at parse time in
+     * FmtBase.getItemFormQuery, so the only realistic failure mode is a
+     * server-supplied subnet whose IP family disagrees with the
+     * vnetIp's, which Builder's native code rejects.
      */
-    private fun parseSubnetPrefix(subnet: String?): Int {
-        val cidr = subnet?.takeIf { it.isNotBlank() } ?: return 32
-        val parts = cidr.split('/')
-        if (parts.size != 2) return 32
-        return parts[1].toIntOrNull()?.takeIf { it in 0..32 } ?: 32
+    private fun configureVnet(builder: Builder, vnetProfile: ProfileItem): Boolean {
+        val ip = vnetProfile.vnetIp ?: return false
+        val (subnetAddr, subnetPrefix) = parseVnetSubnet(vnetProfile.vnetSubnet)
+        return try {
+            // Use the subnet's prefix length so the kernel naturally routes
+            // peer-to-peer traffic over the TUN. The explicit subnet route
+            // below covers the case where the prefix is /32.
+            builder.addAddress(ip, subnetPrefix)
+            builder.addRoute(subnetAddr, subnetPrefix)
+            if (vnetProfile.vnetDefaultRoute != false) {
+                builder.addRoute("0.0.0.0", 0)
+            }
+            true
+        } catch (e: IllegalArgumentException) {
+            LogUtil.e(AppConfig.TAG, "configureVnet: invalid vnet config, falling back to legacy pool", e)
+            false
+        }
     }
 
     /**
      * Splits "10.0.0.0/24" into ("10.0.0.0", 24). Mirrors the panel-side
-     * default if the subnet is missing or malformed.
+     * default if the subnet is missing — the field is already validated
+     * at parse time so we should rarely hit the fallback in practice.
      */
-    private fun parseSubnetCidr(subnet: String?): Pair<String, Int> {
+    private fun parseVnetSubnet(subnet: String?): Pair<String, Int> {
         val cidr = subnet?.takeIf { it.isNotBlank() } ?: return "10.0.0.0" to 24
         val parts = cidr.split('/')
         if (parts.size != 2) return "10.0.0.0" to 24
