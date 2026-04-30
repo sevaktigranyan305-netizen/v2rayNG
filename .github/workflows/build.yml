@@ -61,21 +61,42 @@ jobs:
       run: |
         cp -r ${{ github.workspace }}/libs ${{ github.workspace }}/V2rayNG/app
 
-    - name: Fetch AndroidLibXrayLite tag
-      run: |
-        pushd AndroidLibXrayLite
-        CURRENT_TAG=$(git describe --tags --abbrev=0)
-        echo "Current tag in this repo: $CURRENT_TAG"
-        echo "CURRENT_TAG=$CURRENT_TAG" >> $GITHUB_ENV
-        popd
-
-    - name: Download libv2ray
-      uses: robinraju/release-downloader@v1.13
+    # Replaces the upstream "download libv2ray.aar from 2dust release"
+    # path with an in-tree gomobile build from this fork's submodule.
+    # Reasons:
+    #   - The fork's submodule (sevaktigranyan305-netizen/AndroidLibXrayLite)
+    #     pins a custom xray-core (sevaktigranyan305-netizen/Xray-core) via
+    #     a go.mod replace directive, so a stock 2dust-built .aar would
+    #     ship the wrong xray binary and miss the L3 virtual-network
+    #     features this fork needs.
+    #   - Building from source removes the dependency on the submodule
+    #     having a published release tag — every commit on the submodule
+    #     produces a fresh .aar without manual tagging.
+    - name: Setup Go for libv2ray build
+      uses: actions/setup-go@v6
       with:
-        repository: '2dust/AndroidLibXrayLite'
-        tag: ${{ env.CURRENT_TAG }}
-        fileName: 'libv2ray.aar'
-        out-file-path: V2rayNG/app/libs/
+        go-version-file: AndroidLibXrayLite/go.mod
+
+    - name: Build libv2ray.aar from AndroidLibXrayLite submodule
+      env:
+        ANDROID_NDK_HOME: ${{ env.NDK_HOME }}
+      run: |
+        # gomobile bind needs the submodule's vendored xray assets
+        # (geosite/geoip dat files) staged into ./assets so they end up
+        # baked into the .aar — the same step the AndroidLibXrayLite CI
+        # runs locally before the bind.
+        pushd AndroidLibXrayLite
+        mkdir -p assets data
+        bash gen_assets.sh download
+        cp -v data/*.dat assets/
+        go install golang.org/x/mobile/cmd/gomobile@latest
+        export PATH=$PATH:$(go env GOPATH)/bin
+        gomobile init
+        go mod tidy
+        gomobile bind -v -androidapi 24 -trimpath -ldflags='-s -w -buildid=' ./
+        popd
+        mkdir -p V2rayNG/app/libs
+        cp -v AndroidLibXrayLite/libv2ray.aar V2rayNG/app/libs/libv2ray.aar
 
     - name: Setup Java
       uses: actions/setup-java@v5
