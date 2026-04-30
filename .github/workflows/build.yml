@@ -9,6 +9,13 @@ on:
   push:
     branches:
       - master
+  # Run the APK build on PRs targeting master so each change to the
+  # build pipeline (e.g. AndroidLibXrayLite submodule bumps, libv2ray
+  # build steps, NDK upgrades) is verified before merge instead of
+  # discovered after.
+  pull_request:
+    branches:
+      - master
 
 jobs:
   build:
@@ -61,21 +68,42 @@ jobs:
       run: |
         cp -r ${{ github.workspace }}/libs ${{ github.workspace }}/V2rayNG/app
 
-    - name: Fetch AndroidLibXrayLite tag
-      run: |
-        pushd AndroidLibXrayLite
-        CURRENT_TAG=$(git describe --tags --abbrev=0)
-        echo "Current tag in this repo: $CURRENT_TAG"
-        echo "CURRENT_TAG=$CURRENT_TAG" >> $GITHUB_ENV
-        popd
-
-    - name: Download libv2ray
-      uses: robinraju/release-downloader@v1.13
+    # Replaces the upstream "download libv2ray.aar from 2dust release"
+    # path with an in-tree gomobile build from this fork's submodule.
+    # Reasons:
+    #   - The fork's submodule (sevaktigranyan305-netizen/AndroidLibXrayLite)
+    #     pins a custom xray-core (sevaktigranyan305-netizen/Xray-core) via
+    #     a go.mod replace directive, so a stock 2dust-built .aar would
+    #     ship the wrong xray binary and miss the L3 virtual-network
+    #     features this fork needs.
+    #   - Building from source removes the dependency on the submodule
+    #     having a published release tag — every commit on the submodule
+    #     produces a fresh .aar without manual tagging.
+    - name: Setup Go for libv2ray build
+      uses: actions/setup-go@v6
       with:
-        repository: '2dust/AndroidLibXrayLite'
-        tag: ${{ env.CURRENT_TAG }}
-        fileName: 'libv2ray.aar'
-        out-file-path: V2rayNG/app/libs/
+        go-version-file: AndroidLibXrayLite/go.mod
+
+    - name: Build libv2ray.aar from AndroidLibXrayLite submodule
+      env:
+        ANDROID_NDK_HOME: ${{ env.NDK_HOME }}
+      run: |
+        # gomobile bind needs the submodule's vendored xray assets
+        # (geosite/geoip dat files) staged into ./assets so they end up
+        # baked into the .aar — the same step the AndroidLibXrayLite CI
+        # runs locally before the bind.
+        pushd AndroidLibXrayLite
+        mkdir -p assets data
+        bash gen_assets.sh download
+        cp -v data/*.dat assets/
+        go install golang.org/x/mobile/cmd/gomobile@latest
+        export PATH=$PATH:$(go env GOPATH)/bin
+        gomobile init
+        go mod tidy
+        gomobile bind -v -androidapi 24 -trimpath -ldflags='-s -w -buildid=' ./
+        popd
+        mkdir -p V2rayNG/app/libs
+        cp -v AndroidLibXrayLite/libv2ray.aar V2rayNG/app/libs/libv2ray.aar
 
     - name: Setup Java
       uses: actions/setup-java@v5
@@ -83,20 +111,41 @@ jobs:
         distribution: 'temurin'
         java-version: '21'
 
+    # Keystore is only required when we want a signed, distributable APK
+    # (push to master, manual workflow_dispatch with a release_tag, or
+    # any push to master). PRs against master should validate the build
+    # pipeline without needing access to the signing secrets — fork
+    # repos may not have APP_KEYSTORE_BASE64 set yet, and that should
+    # not block PR CI.
     - name: Decode Keystore
+      if: env.APP_KEYSTORE_BASE64 != ''
       uses: timheuer/base64-to-file@v1.2.4
       id: android_keystore
+      env:
+        APP_KEYSTORE_BASE64: ${{ secrets.APP_KEYSTORE_BASE64 }}
       with:
         fileName: "android_keystore.jks"
         encodedString: ${{ secrets.APP_KEYSTORE_BASE64 }}
 
     - name: Build APK
+      env:
+        KEYSTORE_PATH: ${{ steps.android_keystore.outputs.filePath }}
       run: |
         cd ${{ github.workspace }}/V2rayNG
         echo "sdk.dir=${ANDROID_HOME}" > local.properties
         chmod 755 gradlew
         ./gradlew licenseFdroidReleaseReport
-        ./gradlew assembleRelease -Pandroid.injected.signing.store.file=${{ steps.android_keystore.outputs.filePath }} -Pandroid.injected.signing.store.password=${{ secrets.APP_KEYSTORE_PASSWORD }} -Pandroid.injected.signing.key.alias=${{ secrets.APP_KEYSTORE_ALIAS }} -Pandroid.injected.signing.key.password=${{ secrets.APP_KEY_PASSWORD }}
+        if [ -n "${KEYSTORE_PATH}" ]; then
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=${KEYSTORE_PATH} \
+            -Pandroid.injected.signing.store.password=${{ secrets.APP_KEYSTORE_PASSWORD }} \
+            -Pandroid.injected.signing.key.alias=${{ secrets.APP_KEYSTORE_ALIAS }} \
+            -Pandroid.injected.signing.key.password=${{ secrets.APP_KEY_PASSWORD }}
+        else
+          # No keystore available (fork PR / unconfigured fork): build
+          # unsigned APKs so the pipeline still validates end-to-end.
+          ./gradlew assembleRelease
+        fi
     
     - name: Upload arm64-v8a APK
       uses: actions/upload-artifact@v7
