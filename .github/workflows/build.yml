@@ -111,20 +111,41 @@ jobs:
         distribution: 'temurin'
         java-version: '21'
 
+    # Keystore is only required when we want a signed, distributable APK
+    # (push to master, manual workflow_dispatch with a release_tag, or
+    # any push to master). PRs against master should validate the build
+    # pipeline without needing access to the signing secrets — fork
+    # repos may not have APP_KEYSTORE_BASE64 set yet, and that should
+    # not block PR CI.
     - name: Decode Keystore
+      if: env.APP_KEYSTORE_BASE64 != ''
       uses: timheuer/base64-to-file@v1.2.4
       id: android_keystore
+      env:
+        APP_KEYSTORE_BASE64: ${{ secrets.APP_KEYSTORE_BASE64 }}
       with:
         fileName: "android_keystore.jks"
         encodedString: ${{ secrets.APP_KEYSTORE_BASE64 }}
 
     - name: Build APK
+      env:
+        KEYSTORE_PATH: ${{ steps.android_keystore.outputs.filePath }}
       run: |
         cd ${{ github.workspace }}/V2rayNG
         echo "sdk.dir=${ANDROID_HOME}" > local.properties
         chmod 755 gradlew
         ./gradlew licenseFdroidReleaseReport
-        ./gradlew assembleRelease -Pandroid.injected.signing.store.file=${{ steps.android_keystore.outputs.filePath }} -Pandroid.injected.signing.store.password=${{ secrets.APP_KEYSTORE_PASSWORD }} -Pandroid.injected.signing.key.alias=${{ secrets.APP_KEYSTORE_ALIAS }} -Pandroid.injected.signing.key.password=${{ secrets.APP_KEY_PASSWORD }}
+        if [ -n "${KEYSTORE_PATH}" ]; then
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=${KEYSTORE_PATH} \
+            -Pandroid.injected.signing.store.password=${{ secrets.APP_KEYSTORE_PASSWORD }} \
+            -Pandroid.injected.signing.key.alias=${{ secrets.APP_KEYSTORE_ALIAS }} \
+            -Pandroid.injected.signing.key.password=${{ secrets.APP_KEY_PASSWORD }}
+        else
+          # No keystore available (fork PR / unconfigured fork): build
+          # unsigned APKs so the pipeline still validates end-to-end.
+          ./gradlew assembleRelease
+        fi
     
     - name: Upload arm64-v8a APK
       uses: actions/upload-artifact@v7
