@@ -94,7 +94,20 @@ data class V2rayConfig(
             var mtu: Int? = null,
             var obfsPassword: String? = null,
             var version: Int? = null,
+            // Forked xray-core (sevaktigranyan305-netizen/Xray-core,
+            // proxy/vless/l3client) parses this block off VLESS outbounds
+            // to bring up an L3 TUN tunnel where each peer is assigned a
+            // private IP from the panel-managed subnet. The xray-core JSON
+            // parser expects this nested under settings, sibling of vnext.
+            var virtualNetwork: VirtualNetworkBean? = null,
         ) {
+
+            data class VirtualNetworkBean(
+                var enabled: Boolean = false,
+                var subnet: String? = null,
+                var vnetIp: String? = null,
+                var defaultRoute: Boolean? = null,
+            )
 
             data class VnextBean(
                 var address: String = "",

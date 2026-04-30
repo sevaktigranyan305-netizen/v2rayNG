@@ -215,25 +215,52 @@ class V2RayVpnService : VpnService(), ServiceControl {
      * @param builder The VPN Builder to configure
      */
     private fun configureNetworkSettings(builder: Builder) {
-        val vpnConfig = SettingsManager.getCurrentVpnInterfaceAddressConfig()
         val bypassLan = SettingsManager.routingRulesetsBypassLan()
 
-        // Configure IPv4 settings
         builder.setMtu(SettingsManager.getVpnMtu())
-        builder.addAddress(vpnConfig.ipv4Client, 30)
 
-        // Configure routing rules
-        if (bypassLan) {
-            AppConfig.ROUTED_IP_LIST.forEach {
-                val addr = it.split('/')
-                builder.addRoute(addr[0], addr[1].toInt())
+        // L3 virtualnet path: instead of taking the address from the
+        // built-in 10.10.14.x pool, use the IP the panel pre-allocated
+        // for this client (vnetIp from the VLESS share-link). Android's
+        // VpnService.Builder requires the address to be set BEFORE
+        // .establish() returns the file descriptor, so we cannot wait
+        // for xray to negotiate one with the server.
+        val vnetProfile = SettingsManager.getCurrentVnetProfile()
+        if (vnetProfile?.vnetIp != null) {
+            val prefixLen = parseSubnetPrefix(vnetProfile.vnetSubnet)
+            builder.addAddress(vnetProfile.vnetIp!!, prefixLen)
+            // Always add a route for the virtualnet subnet so peer-to-peer
+            // traffic between clients on the same virtualnet works
+            // regardless of defaultRoute. defaultRoute additionally pulls
+            // everything else through the tunnel.
+            val (subnetAddr, subnetPrefix) = parseSubnetCidr(vnetProfile.vnetSubnet)
+            builder.addRoute(subnetAddr, subnetPrefix)
+            if (vnetProfile.vnetDefaultRoute != false) {
+                builder.addRoute("0.0.0.0", 0)
             }
         } else {
-            builder.addRoute("0.0.0.0", 0)
+            val vpnConfig = SettingsManager.getCurrentVpnInterfaceAddressConfig()
+            // Configure IPv4 settings
+            builder.addAddress(vpnConfig.ipv4Client, 30)
+
+            // Configure routing rules
+            if (bypassLan) {
+                AppConfig.ROUTED_IP_LIST.forEach {
+                    val addr = it.split('/')
+                    builder.addRoute(addr[0], addr[1].toInt())
+                }
+            } else {
+                builder.addRoute("0.0.0.0", 0)
+            }
         }
 
-        // Configure IPv6 if enabled
-        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED) == true) {
+        // Configure IPv6 if enabled (skipped for the virtualnet path:
+        // the panel only allocates an IPv4 vnetIp today and the xray
+        // l3client subnet is IPv4-only).
+        if (vnetProfile?.vnetIp == null
+            && MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED) == true
+        ) {
+            val vpnConfig = SettingsManager.getCurrentVpnInterfaceAddressConfig()
             builder.addAddress(vpnConfig.ipv6Client, 126)
             if (bypassLan) {
                 builder.addRoute("2000::", 3) // Currently only 1/8 of total IPv6 is in use
@@ -342,6 +369,34 @@ class V2RayVpnService : VpnService(), ServiceControl {
         }
 
         tun2SocksService?.startTun2Socks()
+    }
+
+    /**
+     * Returns the prefix length for assigning the local TUN address.
+     *
+     * For an L3 virtualnet, every peer sits inside the same subnet
+     * (e.g. /24), so we use the subnet's prefix length so the kernel
+     * routes other-peer traffic over the TUN by default. Falls back to
+     * /32 if we cannot parse the subnet — that still works because we
+     * separately add the subnet as a route below.
+     */
+    private fun parseSubnetPrefix(subnet: String?): Int {
+        val cidr = subnet?.takeIf { it.isNotBlank() } ?: return 32
+        val parts = cidr.split('/')
+        if (parts.size != 2) return 32
+        return parts[1].toIntOrNull()?.takeIf { it in 0..32 } ?: 32
+    }
+
+    /**
+     * Splits "10.0.0.0/24" into ("10.0.0.0", 24). Mirrors the panel-side
+     * default if the subnet is missing or malformed.
+     */
+    private fun parseSubnetCidr(subnet: String?): Pair<String, Int> {
+        val cidr = subnet?.takeIf { it.isNotBlank() } ?: return "10.0.0.0" to 24
+        val parts = cidr.split('/')
+        if (parts.size != 2) return "10.0.0.0" to 24
+        val prefix = parts[1].toIntOrNull()?.takeIf { it in 0..32 } ?: 24
+        return parts[0] to prefix
     }
 
     private fun stopAllService(isForced: Boolean = true) {

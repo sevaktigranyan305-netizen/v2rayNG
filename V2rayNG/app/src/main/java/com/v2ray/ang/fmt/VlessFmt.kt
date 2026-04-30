@@ -3,6 +3,7 @@ package com.v2ray.ang.fmt
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.ProfileItem
 import com.v2ray.ang.dto.V2rayConfig.OutboundBean
+import com.v2ray.ang.dto.V2rayConfig.OutboundBean.OutSettingsBean.VirtualNetworkBean
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.idnHost
 import com.v2ray.ang.handler.MmkvManager
@@ -65,6 +66,22 @@ object VlessFmt : FmtBase() {
             vnext.users[0].id = profileItem.password.orEmpty()
             vnext.users[0].encryption = profileItem.method
             vnext.users[0].flow = profileItem.flow
+        }
+
+        // L3 virtualnet: mirror the inbound's panel-side virtualNetwork
+        // block onto the outbound so xray-core's l3client kicks in with
+        // the same subnet / pre-allocated IP. Only emit when vnet is on
+        // so legacy server configs and clients are unaffected.
+        if (profileItem.vnet == true) {
+            outboundBean?.settings?.virtualNetwork = VirtualNetworkBean(
+                enabled = true,
+                subnet = profileItem.vnetSubnet?.ifBlank { null } ?: "10.0.0.0/24",
+                vnetIp = profileItem.vnetIp?.ifBlank { null },
+                // defaultRoute is what tells l3client to pull all
+                // traffic through the tunnel; on the panel side this
+                // is forced to true, mirror that as the safe default.
+                defaultRoute = profileItem.vnetDefaultRoute ?: true,
+            )
         }
 
         val sni = outboundBean?.streamSettings?.let {

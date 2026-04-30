@@ -453,10 +453,32 @@ object SettingsManager {
     }
 
     /**
+     * Returns the active server profile if it is a VLESS profile with the
+     * fork's L3 virtualnet hint enabled. Used at VpnService.Builder setup
+     * time to swap the classic VPN address pool for the panel-allocated
+     * vnetIp before xray sees the TUN file descriptor.
+     */
+    fun getCurrentVnetProfile(): ProfileItem? {
+        val guid = MmkvManager.getSelectServer() ?: return null
+        val profile = MmkvManager.decodeServerConfig(guid) ?: return null
+        if (profile.configType != EConfigType.VLESS) return null
+        if (profile.vnet != true) return null
+        return profile
+    }
+
+    /**
      * Check if HEV TUN is being used.
+     *
+     * Forced to false when the active profile is a virtualnet VLESS
+     * profile: the xray-core fork's l3client outbound adopts the TUN file
+     * descriptor directly, so layering hev-socks5-tunnel on top of it
+     * would race over the fd and corrupt traffic. Legacy profiles keep
+     * the user-controlled preference.
+     *
      * @return True if HEV TUN is used, false otherwise.
      */
     fun isUsingHevTun(): Boolean {
+        if (getCurrentVnetProfile() != null) return false
         return MmkvManager.decodeSettingsBool(AppConfig.PREF_USE_HEV_TUNNEL, true)
     }
 

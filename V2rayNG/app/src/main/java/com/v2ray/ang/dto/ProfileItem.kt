@@ -70,6 +70,16 @@ data class ProfileItem(
     var policyGroupSubscriptionId: String? = null,
     var policyGroupFilter: String? = null,
 
+    // L3 virtual-network fields used by the xray-core fork (proxy/vless/l3client).
+    // The 3x-ui fork appends &vnet=1, &vnetSubnet=, &vnetIp=, &vnetDefaultRoute=
+    // to VLESS share-links / JSON subscriptions so Android clients can pre-
+    // configure VpnService.Builder before xray sees the TUN file descriptor.
+    // Null on legacy profiles → those keep using the classic VPN address pool.
+    var vnet: Boolean? = null,
+    var vnetSubnet: String? = null,
+    var vnetIp: String? = null,
+    var vnetDefaultRoute: Boolean? = null,
+
     ) {
     companion object {
         fun create(configType: EConfigType): ProfileItem {

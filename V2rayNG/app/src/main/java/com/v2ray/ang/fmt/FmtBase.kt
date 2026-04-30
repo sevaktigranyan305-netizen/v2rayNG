@@ -92,6 +92,21 @@ open class FmtBase {
         config.spiderX = queryParam["spx"]
         config.mldsa65Verify = queryParam["pqv"]
         config.flow = queryParam["flow"]
+
+        // L3 virtual-network hints from the 3x-ui fork. Only meaningful on
+        // VLESS profiles backed by the xray-core fork's l3client outbound.
+        config.vnet = when (queryParam["vnet"]) {
+            "1" -> true
+            "0" -> false
+            else -> null
+        }
+        config.vnetSubnet = queryParam["vnetSubnet"]?.ifBlank { null }
+        config.vnetIp = queryParam["vnetIp"]?.ifBlank { null }
+        config.vnetDefaultRoute = when (queryParam["vnetDefaultRoute"]) {
+            "1" -> true
+            "0" -> false
+            else -> null
+        }
     }
 
     /**
@@ -114,6 +129,18 @@ open class FmtBase {
         config.mldsa65Verify?.nullIfBlank()?.let { dicQuery["pqv"] = it }
         config.flow?.nullIfBlank()?.let { dicQuery["flow"] = it }
         config.finalMask?.nullIfBlank()?.let { dicQuery["fm"] = it }
+        // Round-trip the L3 virtualnet hints. Only emitted when vnet is on
+        // so legacy clients see clean VLESS share-links.
+        if (config.vnet == true) {
+            dicQuery["vnet"] = "1"
+            config.vnetSubnet?.nullIfBlank()?.let { dicQuery["vnetSubnet"] = it }
+            config.vnetIp?.nullIfBlank()?.let { dicQuery["vnetIp"] = it }
+            if (config.vnetDefaultRoute == true) {
+                dicQuery["vnetDefaultRoute"] = "1"
+            } else if (config.vnetDefaultRoute == false) {
+                dicQuery["vnetDefaultRoute"] = "0"
+            }
+        }
         config.kcpMtu?.let { dicQuery["mtu"] = it.toString() }
         config.kcpTti?.let { dicQuery["tti"] = it.toString() }
         // Add two keys for compatibility: "insecure" and "allowInsecure"
