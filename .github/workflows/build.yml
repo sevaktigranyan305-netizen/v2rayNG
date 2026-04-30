@@ -9,6 +9,13 @@ on:
   push:
     branches:
       - master
+  # Run the APK build on PRs targeting master so each change to the
+  # build pipeline (e.g. AndroidLibXrayLite submodule bumps, libv2ray
+  # build steps, NDK upgrades) is verified before merge instead of
+  # discovered after.
+  pull_request:
+    branches:
+      - master
 
 jobs:
   build:
