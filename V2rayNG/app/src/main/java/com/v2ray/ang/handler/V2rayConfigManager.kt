@@ -371,6 +371,13 @@ object V2rayConfigManager {
     //region some sub function
 
     private fun needTun(): Boolean {
+        // Virtualnet (xray-core fork's l3client) adopts the TUN fd directly
+        // from inside the VLESS outbound — there must be no separate "tun"
+        // inbound in the config or both ends would race over the same fd
+        // and corrupt traffic. So skip the v2ray_config_with_tun.json
+        // template (and the runtime tun-inbound injection) entirely when
+        // the active profile is a virtualnet profile.
+        if (SettingsManager.getCurrentVnetProfile() != null) return false
         return SettingsManager.isVpnMode() && !SettingsManager.isUsingHevTun()
     }
 
