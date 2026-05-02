@@ -70,13 +70,18 @@ object VlessFmt : FmtBase() {
 
         // L3 virtualnet: mirror the inbound's panel-side virtualNetwork
         // block onto the outbound so xray-core's l3client kicks in with
-        // the same subnet / pre-allocated IP. Only emit when vnet is on
-        // so legacy server configs and clients are unaffected.
-        if (profileItem.vnet == true) {
+        // the same subnet / pre-allocated IP. Gated on BOTH vnet=true
+        // AND a non-blank vnetIp — same gate as
+        // SettingsManager.getCurrentVnetProfile so all three sites
+        // (parse / outbound / VpnService.Builder) agree. Without the
+        // vnetIp guard a legacy "tun" inbound would still be added
+        // (needTun=true because getCurrentVnetProfile returns null) and
+        // race with l3client over the TUN file descriptor.
+        if (profileItem.vnet == true && !profileItem.vnetIp.isNullOrBlank()) {
             outboundBean?.settings?.virtualNetwork = VirtualNetworkBean(
                 enabled = true,
                 subnet = profileItem.vnetSubnet?.ifBlank { null } ?: "10.0.0.0/24",
-                vnetIp = profileItem.vnetIp?.ifBlank { null },
+                vnetIp = profileItem.vnetIp,
                 // defaultRoute is what tells l3client to pull all
                 // traffic through the tunnel; on the panel side this
                 // is forced to true, mirror that as the safe default.

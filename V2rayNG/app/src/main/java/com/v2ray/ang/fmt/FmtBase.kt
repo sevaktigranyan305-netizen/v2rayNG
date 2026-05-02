@@ -104,10 +104,15 @@ open class FmtBase {
         // addRoute downstream never sees garbage from a malicious or
         // typo'd link. A bad value silently becomes null, which makes
         // the runtime fall back to the legacy address pool.
+        // The xray-core fork's l3client subnet is IPv4-only; the panel
+        // never hands out IPv6 vnetIps. Restrict both to IPv4 so a
+        // family-mismatch can't slip through parse-time and blow up
+        // VpnService.Builder.addRoute later (Builder rejects an IPv4
+        // route on an IPv6 address pair and vice versa).
         config.vnetSubnet = queryParam["vnetSubnet"]?.ifBlank { null }
             ?.takeIf { isValidIpv4Cidr(it) }
         config.vnetIp = queryParam["vnetIp"]?.ifBlank { null }
-            ?.takeIf { Utils.isPureIpAddress(it) }
+            ?.takeIf { isIpv4Literal(it) }
         config.vnetDefaultRoute = when (queryParam["vnetDefaultRoute"]) {
             "1" -> true
             "0" -> false
@@ -119,14 +124,32 @@ open class FmtBase {
      * Returns true when the input is an IPv4 CIDR like "10.0.0.0/24".
      *
      * Used to gate vnetSubnet so we never feed a malformed value to
-     * VpnService.Builder.addRoute().
+     * VpnService.Builder.addRoute(). IPv4-only by design: the panel
+     * subnet for the xray-core l3client is always IPv4, and Builder
+     * rejects family-mismatched address/route pairs at runtime.
      */
     private fun isValidIpv4Cidr(value: String): Boolean {
         val parts = value.split('/')
         if (parts.size != 2) return false
         val prefix = parts[1].toIntOrNull() ?: return false
         if (prefix !in 0..32) return false
-        return Utils.isPureIpAddress(parts[0])
+        return isIpv4Literal(parts[0])
+    }
+
+    /**
+     * Returns true when the input is a dotted-quad IPv4 literal.
+     *
+     * Utils.isPureIpAddress accepts both IPv4 and IPv6, which lets a
+     * crafted vnetIp like "::1" slip past parse-time validation. We
+     * want IPv4-only here.
+     */
+    private fun isIpv4Literal(value: String): Boolean {
+        val parts = value.split('.')
+        if (parts.size != 4) return false
+        return parts.all {
+            val n = it.toIntOrNull() ?: return false
+            n in 0..255 && it == n.toString()
+        }
     }
 
     /**
