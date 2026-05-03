@@ -9,6 +9,11 @@ on:
   push:
     branches:
       - master
+    # A push of a v*.*.* tag also triggers a build — the resulting
+    # signed APKs are then automatically published as a GitHub Release
+    # marked latest (see the "Publish GitHub Release" step below).
+    tags:
+      - 'v*'
   # Run the APK build on PRs targeting master so each change to the
   # build pipeline (e.g. AndroidLibXrayLite submodule bumps, libv2ray
   # build steps, NDK upgrades) is verified before merge instead of
@@ -168,11 +173,24 @@ jobs:
         name: x86-apk
         path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*x86*.apk
 
-    - name: Upload to release
+    # Publish a GitHub Release when the build was triggered by a
+    # v*.*.* tag push (or by workflow_dispatch with release_tag set)
+    # and all APKs are successfully signed. The release is marked
+    # "latest", not prerelease, so end users see it prominently on
+    # the repo home page and can `x-ui update`-style pull it.
+    - name: Publish GitHub Release
+      if: |
+        success() && env.APP_KEYSTORE_BASE64 != '' && (
+          startsWith(github.ref, 'refs/tags/v') ||
+          github.event.inputs.release_tag != ''
+        )
+      env:
+        APP_KEYSTORE_BASE64: ${{ secrets.APP_KEYSTORE_BASE64 }}
       uses: svenstaro/upload-release-action@v2
-      if: github.event.inputs.release_tag != ''
       with:
         file: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*.apk
-        tag: ${{ github.event.inputs.release_tag }}
+        tag: ${{ github.event.inputs.release_tag || github.ref_name }}
         file_glob: true
-        prerelease: true
+        prerelease: false
+        make_latest: true
+        overwrite: true
