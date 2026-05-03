@@ -26,6 +26,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # The default GITHUB_TOKEN is read-only on `contents`, which makes
+    # svenstaro/upload-release-action fail with "Not Found" the first time
+    # it tries to create a Release for a tag (it can't POST to
+    # /releases). Granting contents:write at the job level lets the
+    # token create the Release object and upload APK assets to it.
+    permissions:
+      contents: write
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
