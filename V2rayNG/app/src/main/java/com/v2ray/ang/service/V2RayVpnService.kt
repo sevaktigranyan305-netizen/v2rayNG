@@ -314,36 +314,55 @@ class V2RayVpnService : VpnService(), ServiceControl {
     private fun configurePerAppProxy(builder: Builder) {
         val selfPackageName = BuildConfig.APPLICATION_ID
 
+        val perAppEnabled = MmkvManager.decodeSettingsBool(AppConfig.PREF_PER_APP_PROXY)
+        val apps = MmkvManager.decodeSettingsStringSet(AppConfig.PREF_PER_APP_PROXY_SET)
+        val bypassApps = MmkvManager.decodeSettingsBool(AppConfig.PREF_BYPASS_APPS)
+        LogUtil.i(
+            AppConfig.TAG,
+            "StartCore-VPN: per-app config: enabled=$perAppEnabled, " +
+                "bypassMode=$bypassApps, listSize=${apps?.size ?: 0}, self=$selfPackageName"
+        )
+
         // If per-app proxy is not enabled, disallow the VPN service's own package and return
-        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_PER_APP_PROXY) == false) {
+        if (perAppEnabled == false) {
+            LogUtil.i(AppConfig.TAG, "StartCore-VPN: per-app disabled; only excluding self")
             builder.addDisallowedApplication(selfPackageName)
             return
         }
 
         // If no apps are selected, disallow the VPN service's own package and return
-        val apps = MmkvManager.decodeSettingsStringSet(AppConfig.PREF_PER_APP_PROXY_SET)
         if (apps.isNullOrEmpty()) {
+            LogUtil.i(AppConfig.TAG, "StartCore-VPN: per-app enabled but app list is empty; only excluding self")
             builder.addDisallowedApplication(selfPackageName)
             return
         }
 
-        val bypassApps = MmkvManager.decodeSettingsBool(AppConfig.PREF_BYPASS_APPS)
         // Handle the VPN service's own package according to the mode
         if (bypassApps) apps.add(selfPackageName) else apps.remove(selfPackageName)
 
+        var ok = 0
+        var failed = 0
         apps.forEach {
             try {
                 if (bypassApps) {
                     // In bypass mode, disallow the selected apps
                     builder.addDisallowedApplication(it)
+                    LogUtil.i(AppConfig.TAG, "StartCore-VPN: addDisallowedApplication($it)")
                 } else {
                     // In proxy mode, only allow the selected apps
                     builder.addAllowedApplication(it)
+                    LogUtil.i(AppConfig.TAG, "StartCore-VPN: addAllowedApplication($it)")
                 }
+                ok++
             } catch (e: PackageManager.NameNotFoundException) {
-                LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to configure app", e)
+                failed++
+                LogUtil.e(AppConfig.TAG, "StartCore-VPN: package not found, skipping: $it", e)
             }
         }
+        LogUtil.i(
+            AppConfig.TAG,
+            "StartCore-VPN: per-app config applied: ok=$ok, failed=$failed, mode=${if (bypassApps) "bypass" else "proxy"}"
+        )
     }
 
     /**
