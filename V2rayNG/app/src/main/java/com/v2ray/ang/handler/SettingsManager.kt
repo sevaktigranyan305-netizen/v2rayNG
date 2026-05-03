@@ -180,7 +180,10 @@ object SettingsManager {
      * @return True if bypassing LAN, false otherwise.
      */
     fun routingRulesetsBypassLan(): Boolean {
-        val vpnBypassLan = MmkvManager.decodeSettingsString(AppConfig.PREF_VPN_BYPASS_LAN) ?: "1"
+        // Fork default: "Not Bypass" (2). The L3 virtualnet uses 10.0.0.0/24
+        // which would otherwise collide with the upstream "Bypass" default
+        // that excludes the entire 10.0.0.0/8 RFC1918 range from the TUN.
+        val vpnBypassLan = MmkvManager.decodeSettingsString(AppConfig.PREF_VPN_BYPASS_LAN) ?: "2"
         if (vpnBypassLan == "1") {
             return true
         } else if (vpnBypassLan == "2") {
