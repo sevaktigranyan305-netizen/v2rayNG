@@ -14,8 +14,12 @@ android {
         applicationId = "com.v2rayvn.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 723
-        versionName = "2.1.3"
+        // Fork version line. Reset to 1.0.0 / versionCode 1 because the
+        // applicationId changed (com.v2rayvn.app{,.fdroid}), so this is a
+        // brand-new app from Android's PackageManager point of view and
+        // upstream's monotonic versionCode lineage no longer applies.
+        versionCode = 1
+        versionName = "1.0.0"
         multiDexEnabled = true
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
@@ -94,7 +98,7 @@ android {
                 .map { it as com.android.build.gradle.internal.api.ApkVariantOutputImpl }
                 .forEach { output ->
                     val abi = output.getFilter("ABI") ?: "universal"
-                    output.outputFileName = "v2rayNG_${variant.versionName}-fdroid_${abi}.apk"
+                    output.outputFileName = "v2rayVN_${variant.versionName}-fdroid_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
                         output.versionCodeOverride =
                             (100 * variant.versionCode + versionCodes[abi]!!).plus(5000000)
@@ -114,7 +118,7 @@ android {
                     else
                         "universal"
 
-                    output.outputFileName = "v2rayNG_${variant.versionName}_${abi}.apk"
+                    output.outputFileName = "v2rayVN_${variant.versionName}_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
                         output.versionCodeOverride =
                             (1000000 * versionCodes[abi]!!).plus(variant.versionCode)
