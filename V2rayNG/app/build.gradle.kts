@@ -9,7 +9,9 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.v2ray.ang"
+        // Fork rebrand: user-visible Android package id is v2rayvn.app.
+        // Kotlin namespace stays com.v2ray.ang to avoid touching every import.
+        applicationId = "com.v2rayvn.app"
         minSdk = 24
         targetSdk = 36
         versionCode = 723
